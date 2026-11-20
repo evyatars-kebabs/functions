@@ -62,18 +62,10 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
       <button class="primary" id="go">חשב</button>
     </div>
     <div class="preview math" id="preview" hidden></div>
-    <div class="row" style="margin-top:12px">
-      <input type="text" id="x0" class="small" placeholder="x = (לא חובה)" autocomplete="off" spellcheck="false">
-    </div>
-    <div class="row" style="margin-top:12px">
-      <input type="text" id="pa" class="tiny" placeholder="a = (לא חובה)" autocomplete="off" spellcheck="false">
-      <input type="text" id="pb" class="tiny" placeholder="b = (לא חובה)" autocomplete="off" spellcheck="false">
-      <input type="text" id="pc" class="tiny" placeholder="c = (לא חובה)" autocomplete="off" spellcheck="false">
-    </div>
     <div class="kb" id="keypad"></div>
   <div class="kb" id="fnrow" hidden></div>
     <div class="examples" id="examples"></div>
-    <p class="help">אופרטורים: + − · / ^ · סוגריים · כפל משתמע (2x) · פונקציות: sin cos tan exp ln log (= log₁₀) sqrt · קבועים: pi e · פרמטרים: a b c (ערכים אופציונליים לחישוב נקודה)</p>
+    <p class="help">אופרטורים: + − · / ^ · סוגריים · כפל משתמע (2x) · פונקציות: sin cos tan exp ln log (= log₁₀) sqrt · קבועים: pi e · פרמטרים: a b c</p>
   </div>
 
   <p class="err card" id="err" hidden></p>
@@ -81,8 +73,8 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
   <div class="card" id="out" hidden>
     <div class="res">
       <div class="item"><small>הפונקציה</small><div class="math" id="r0"></div></div>
-      <div class="item"><small>נגזרת ראשונה</small><div class="math" id="r1"></div><div class="v" id="v1"></div></div>
-      <div class="item"><small>נגזרת שנייה</small><div class="math" id="r2"></div><div class="v" id="v2"></div></div>
+      <div class="item"><small>נגזרת ראשונה</small><div class="math" id="r1"></div></div>
+      <div class="item"><small>נגזרת שנייה</small><div class="math" id="r2"></div></div>
     </div>
   </div>
 
@@ -95,7 +87,6 @@ const FUNCS = {
   ln: Math.log, log: Math.log10, sqrt: Math.sqrt
 };
 const CONSTS = { pi: { name: 'π', v: Math.PI }, e: { name: 'e', v: Math.E } };
-const PARAMS = {};   // ערכים מספריים לפרמטרים a, b, c (אם הוזנו)
 const PARAM_NAMES = ['a', 'b', 'c'];
 
 const num  = v => ({ t: 'num', v });
@@ -199,15 +190,6 @@ function parse(src) {
 const isNum  = n => n.t === 'num';
 const isZero = n => isNum(n) && n.v === 0;
 const isOne  = n => isNum(n) && n.v === 1;
-// שמות הפרמטרים שמופיעים בביטוי
-function paramsIn(n, out = new Set()) {
-  switch (n.t) {
-    case 'param': out.add(n.name); break;
-    case 'neg': case 'fn': paramsIn(n.a, out); break;
-    case 'bin': paramsIn(n.a, out); paramsIn(n.b, out); break;
-  }
-  return out;
-}
 function hasVar(n) {
   switch (n.t) {
     case 'var': return true;
@@ -446,7 +428,6 @@ function toText(n, html = false) {
 function ev(n, x) {
   switch (n.t) {
     case 'num': case 'const': return n.v;
-    case 'param': return n.name in PARAMS ? PARAMS[n.name] : NaN;
     case 'var': return x;
     case 'neg': return -ev(n.a, x);
     case 'fn':  return FUNCS[n.name](ev(n.a, x));
@@ -465,7 +446,6 @@ function analyze(src) {
 // ---------- ממשק ----------
 if (typeof document !== 'undefined') {
   const $ = id => document.getElementById(id);
-  const showVal = v => Number.isFinite(v) ? fmt(v) : 'לא מוגדר';
   // תצוגה מקדימה של הביטוי כפי שהוקלד (שבר, שורש)
   function updatePreview() {
     const el = $('preview');
@@ -481,36 +461,12 @@ if (typeof document !== 'undefined') {
   function run() {
     const src = $('expr').value;
     updatePreview();
-    const x0s = $('x0').value.trim();
     try {
       const { f, f1, f2 } = analyze(src);
-      for (const k of PARAM_NAMES) {
-        const ps = $('p' + k).value.trim();
-        if (!ps) { delete PARAMS[k]; continue; }
-        const pn = simp(parse(ps));
-        if (hasVar(pn)) throw new Error(`הערך של ${k} חייב להיות מספר`);
-        const pv = ev(pn, 0);
-        if (!Number.isFinite(pv)) throw new Error(`הערך של ${k} לא תקין`);
-        PARAMS[k] = pv;
-      }
-      const missing = [...paramsIn(f)].filter(k => !(k in PARAMS));
-      let x0 = null;
-      if (x0s) {
-        const n = simp(parse(x0s));
-        if (hasVar(n)) throw new Error('הנקודה חייבת להיות מספר (בלי x)');
-        x0 = ev(n, 0);
-        if (!Number.isFinite(x0)) throw new Error('הנקודה לא תקינה');
-      }
 
       $('r0').innerHTML = 'f(x) = ' + toText(f, true);
       $('r1').innerHTML = "f′(x) = " + toText(f1, true);
       $('r2').innerHTML = "f″(x) = " + toText(f2, true);
-
-      const vals = x0 !== null && missing.length === 0 ? [ev(f, x0), ev(f1, x0), ev(f2, x0)] : null;
-      $('v1').textContent = vals ? `ב-x = ${fmt(x0)}:  f(${fmt(x0)}) = ${showVal(vals[0])}   ·   f′ = ${showVal(vals[1])}` : '';
-      $('v2').textContent = vals ? `ב-x = ${fmt(x0)}:  f″ = ${showVal(vals[2])}` : '';
-      $('v2').hidden = !vals;
-      $('v1').hidden = !vals;
 
       $('err').hidden = true;
       $('out').hidden = false;
@@ -610,9 +566,7 @@ if (typeof document !== 'undefined') {
 
   $('go').onclick = run;
   $('expr').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
-  $('x0').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
   $('expr').value = 'x^3 - 2x';
-  $('x0').value = '1';
   updatePreview();
   run();
 }
