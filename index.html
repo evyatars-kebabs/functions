@@ -46,7 +46,6 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 #fnrow{gap:6px;margin-top:10px}
 #fnrow button{min-width:52px;padding:8px 10px}
 .kb button.op{color:var(--accent);font-weight:600}
-.kb button:disabled{opacity:.4;cursor:default}
 @media (max-width:560px){.kblock.right{flex:1 1 100%}}
 </style>
 </head>
@@ -477,19 +476,17 @@ if (typeof document !== 'undefined') {
     }
   }
 
-  // מקלדת בפריסה של Desmos: פונקציות, מספרים, פעולות וניווט. מקשים שאינם נתמכים מושבתים.
+  // מקלדת בפריסה של Desmos: פונקציות, מספרים, פעולות וניווט (רק מקשים שנתמכים).
   const KB = {
     left: [
       ['x', 'x'], ['a', 'a'], ['a²', '^2'], ['aᵇ', '^'],
-      ['(', '('], [')', ')'], ['<', null], ['>', null],
-      ['|a|', null], [',', null], ['≤', null], ['≥', null],
-      ['ABC', null], ['🔊', null], ['√', 'sqrt('], ['π', 'pi'],
+      ['(', '('], [')', ')'], ['√', 'sqrt('], ['π', 'pi'],
     ],
     num: [
       ['7', '7'], ['8', '8'], ['9', '9'], ['÷', '/'],
       ['4', '4'], ['5', '5'], ['6', '6'], ['×', '*'],
       ['1', '1'], ['2', '2'], ['3', '3'], ['−', '-'],
-      ['0', '0'], ['.', '.'], ['=', null], ['+', '+'],
+      ['0', '0', 'wide'], ['.', '.'], ['+', '+'],
     ],
     right: [
       ['functions', 'FUNCS', 'wide'],
@@ -538,8 +535,7 @@ if (typeof document !== 'undefined') {
       if (cls === 'enter') classes.push('primary');
       if (['+', '-', '*', '/', '^', '^2'].includes(val)) classes.push('op');
       b.className = classes.join(' ');
-      if (val === null) b.disabled = true;
-      else b.onclick = () => keyInsert(val);
+      b.onclick = () => keyInsert(val);
       block.appendChild(b);
     });
     $('keypad').appendChild(block);
