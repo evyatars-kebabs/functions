@@ -37,11 +37,17 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 .math{direction:ltr;unicode-bidi:isolate;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.05rem;word-break:break-word;text-align:left}
 .v{color:var(--muted);font-size:.9rem;direction:ltr;unicode-bidi:isolate;text-align:left;margin-top:4px}
 .err{color:var(--err);font-weight:600;margin:0}
-.keypad{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:12px;direction:ltr}
-.keypad button{padding:10px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1rem;min-width:0}
-.keypad button.fn{font-size:.9rem}
-.keypad button.op{color:var(--accent);font-weight:600}
-.keypad button.ctl{background:var(--bg);color:var(--muted)}
+.kb{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;direction:ltr;align-items:flex-start}
+.kblock{display:grid;gap:6px}
+.kblock.left,.kblock.num{grid-template-columns:repeat(4,minmax(0,1fr));flex:1 1 220px}
+.kblock.right{grid-template-columns:repeat(2,minmax(0,1fr));flex:0 0 140px}
+.kb button{padding:10px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1rem;min-width:0}
+.kb button.wide{grid-column:span 2}
+#fnrow{gap:6px;margin-top:10px}
+#fnrow button{min-width:52px;padding:8px 10px}
+.kb button.op{color:var(--accent);font-weight:600}
+.kb button:disabled{opacity:.4;cursor:default}
+@media (max-width:560px){.kblock.right{flex:1 1 100%}}
 </style>
 </head>
 <body>
@@ -64,7 +70,8 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
       <input type="text" id="pb" class="tiny" placeholder="b = (לא חובה)" autocomplete="off" spellcheck="false">
       <input type="text" id="pc" class="tiny" placeholder="c = (לא חובה)" autocomplete="off" spellcheck="false">
     </div>
-    <div class="keypad" id="keypad"></div>
+    <div class="kb" id="keypad"></div>
+  <div class="kb" id="fnrow" hidden></div>
     <div class="examples" id="examples"></div>
     <p class="help">אופרטורים: + − · / ^ · סוגריים · כפל משתמע (2x) · פונקציות: sin cos tan exp ln log (= log₁₀) sqrt · קבועים: pi e · פרמטרים: a b c (ערכים אופציונליים לחישוב נקודה)</p>
   </div>
@@ -514,14 +521,27 @@ if (typeof document !== 'undefined') {
     }
   }
 
-  // מקלדת מובנית: מכניסה טקסט במיקום הסמן בשדה הביטוי
-  const KEYS = [
-    ['x', 'x', ''], ['π', 'pi', ''], ['e', 'e', ''], ['^', '^', 'op'], ['²', '^2', 'op'], ['eˣ', 'exp(', 'fn'],
-    ['(', '(', ''], [')', ')', ''], ['+', '+', 'op'], ['−', '-', 'op'], ['·', '*', 'op'], ['/', '/', 'op'],
-    ['sin', 'sin(', 'fn'], ['cos', 'cos(', 'fn'], ['tan', 'tan(', 'fn'], ['ln', 'ln(', 'fn'], ['log', 'log(', 'fn'], ['√', 'sqrt(', 'fn'],
-    ['a', 'a', ''], ['b', 'b', ''], ['c', 'c', ''], ['2', '2', ''],
-    ['⌫', 'BS', 'ctl'], ['C', 'CLR', 'ctl'], ['חשב', 'RUN', 'op'],
-  ];
+  // מקלדת בפריסה של Desmos: פונקציות, מספרים, פעולות וניווט. מקשים שאינם נתמכים מושבתים.
+  const KB = {
+    left: [
+      ['x', 'x'], ['a', 'a'], ['a²', '^2'], ['aᵇ', '^'],
+      ['(', '('], [')', ')'], ['<', null], ['>', null],
+      ['|a|', null], [',', null], ['≤', null], ['≥', null],
+      ['ABC', null], ['🔊', null], ['√', 'sqrt('], ['π', 'pi'],
+    ],
+    num: [
+      ['7', '7'], ['8', '8'], ['9', '9'], ['÷', '/'],
+      ['4', '4'], ['5', '5'], ['6', '6'], ['×', '*'],
+      ['1', '1'], ['2', '2'], ['3', '3'], ['−', '-'],
+      ['0', '0'], ['.', '.'], ['=', null], ['+', '+'],
+    ],
+    right: [
+      ['functions', 'FUNCS', 'wide'],
+      ['←', 'LEFT'], ['→', 'RIGHT'],
+      ['⌫', 'BS', 'wide'],
+      ['↵', 'RUN', 'enter'],
+    ],
+  };
   function keyInsert(t) {
     const el = $('expr');
     const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? s;
@@ -533,10 +553,16 @@ if (typeof document !== 'undefined') {
       }
       el.value = el.value.slice(0, from) + el.value.slice(e);
       el.setSelectionRange(from, from);
-    } else if (t === 'CLR') {
-      el.value = '';
+    } else if (t === 'LEFT' || t === 'RIGHT') {
+      let pos;
+      if (s !== e) pos = t === 'LEFT' ? s : e;
+      else pos = Math.min(el.value.length, Math.max(0, s + (t === 'LEFT' ? -1 : 1)));
+      el.setSelectionRange(pos, pos);
     } else if (t === 'RUN') {
       run();
+    } else if (t === 'FUNCS') {
+      $('fnrow').hidden = !$('fnrow').hidden;
+      return;
     } else {
       el.value = el.value.slice(0, s) + t + el.value.slice(e);
       const pos = s + t.length;
@@ -545,13 +571,31 @@ if (typeof document !== 'undefined') {
     el.focus();
     updatePreview();
   }
-  const kp = $('keypad');
-  KEYS.forEach(([label, val, cls]) => {
+  for (const [name, keys] of Object.entries(KB)) {
+    const block = document.createElement('div');
+    block.className = 'kblock ' + name;
+    keys.forEach(([label, val, cls]) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      const classes = [];
+      if (cls === 'wide' || cls === 'enter') classes.push('wide');
+      if (cls === 'enter') classes.push('primary');
+      if (['+', '-', '*', '/', '^', '^2'].includes(val)) classes.push('op');
+      b.className = classes.join(' ');
+      if (val === null) b.disabled = true;
+      else b.onclick = () => keyInsert(val);
+      block.appendChild(b);
+    });
+    $('keypad').appendChild(block);
+  }
+  // שורת פונקציות וקבועים, נפתחת עם הכפתור functions
+  const FN_KEYS = [['sin', 'sin('], ['cos', 'cos('], ['tan', 'tan('], ['exp', 'exp('], ['ln', 'ln('], ['log', 'log('], ['e', 'e'], ['a', 'a'], ['b', 'b'], ['c', 'c']];
+  const fnrow = $('fnrow');
+  FN_KEYS.forEach(([label, val]) => {
     const b = document.createElement('button');
     b.textContent = label;
-    b.className = cls;
     b.onclick = () => keyInsert(val);
-    kp.appendChild(b);
+    fnrow.appendChild(b);
   });
   $('expr').setAttribute('inputmode', 'none');
 
