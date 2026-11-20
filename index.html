@@ -34,9 +34,6 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 .math{direction:ltr;unicode-bidi:isolate;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.05rem;word-break:break-word;text-align:left}
 .v{color:var(--muted);font-size:.9rem;direction:ltr;unicode-bidi:isolate;text-align:left;margin-top:4px}
 .err{color:var(--err);font-weight:600;margin:0}
-canvas{width:100%;height:260px;display:block}
-.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.9rem;margin-top:10px;direction:ltr}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-inline-end:6px}
 .keypad{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:12px;direction:ltr}
 .keypad button{padding:10px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1rem;min-width:0}
 .keypad button.fn{font-size:.9rem}
@@ -78,14 +75,6 @@ canvas{width:100%;height:260px;display:block}
     </div>
   </div>
 
-  <div class="card" id="plotCard" hidden>
-    <canvas id="plot"></canvas>
-    <div class="legend">
-      <span><span class="dot" style="background:var(--f)"></span>f(x)</span>
-      <span><span class="dot" style="background:var(--f1)"></span>f′(x)</span>
-      <span><span class="dot" style="background:var(--f2)"></span>f″(x)</span>
-    </div>
-  </div>
 </div>
 
 <script>
@@ -388,83 +377,7 @@ function analyze(src) {
 // ---------- ממשק ----------
 if (typeof document !== 'undefined') {
   const $ = id => document.getElementById(id);
-  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
   const showVal = v => Number.isFinite(v) ? fmt(v) : 'לא מוגדר';
-  let lastPlot = null;
-
-  function plot(curves, c, half, x0, vals) {
-    const canvas = $('plot');
-    const dpr = window.devicePixelRatio || 1;
-    const W = canvas.clientWidth, H = canvas.clientHeight;
-    if (!W || !H) return;
-    canvas.width = Math.round(W * dpr);
-    canvas.height = Math.round(H * dpr);
-    const g = canvas.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    const xmin = c - half, xmax = c + half, N = 500;
-    const data = curves.map(cv => {
-      const ys = [];
-      for (let i = 0; i <= N; i++) {
-        const x = xmin + (xmax - xmin) * i / N;
-        let y;
-        try { y = ev(cv.node, x); } catch (_) { y = NaN; }
-        ys.push(Number.isFinite(y) ? y : null);
-      }
-      return { ys, color: cv.color };
-    });
-
-    const all = data.flatMap(s => s.ys).filter(v => v !== null).sort((a, b) => a - b);
-    let lo = -1, hi = 1;
-    if (all.length > 1) {
-      lo = all[Math.floor(all.length * 0.03)];
-      hi = all[Math.min(all.length - 1, Math.floor(all.length * 0.97))];
-    }
-    const pad = (hi - lo) * 0.1 || 1;
-    lo = Math.min(lo - pad, 0);
-    hi = Math.max(hi + pad, 0);
-
-    const X = x => (x - xmin) / (xmax - xmin) * W;
-    const Y = y => H - (y - lo) / (hi - lo) * H;
-
-    g.clearRect(0, 0, W, H);
-    g.strokeStyle = css('--muted');
-    g.globalAlpha = 0.5;
-    g.lineWidth = 1;
-    g.beginPath();
-    if (0 >= lo && 0 <= hi) { g.moveTo(0, Y(0)); g.lineTo(W, Y(0)); }
-    if (0 >= xmin && 0 <= xmax) { g.moveTo(X(0), 0); g.lineTo(X(0), H); }
-    g.stroke();
-    g.globalAlpha = 1;
-
-    g.lineWidth = 2;
-    for (const s of data) {
-      g.strokeStyle = s.color;
-      g.beginPath();
-      let pen = false, prev = null;
-      for (let i = 0; i <= N; i++) {
-        const y = s.ys[i];
-        const x = xmin + (xmax - xmin) * i / N;
-        if (y === null) { pen = false; prev = null; continue; }
-        if (!pen || (prev !== null && Math.abs(y - prev) > (hi - lo) * 2)) { g.moveTo(X(x), Y(y)); pen = true; }
-        else g.lineTo(X(x), Y(y));
-        prev = y;
-      }
-      g.stroke();
-    }
-
-    if (x0 !== null && vals) {
-      vals.forEach((y, k) => {
-        if (!Number.isFinite(y) || y < lo || y > hi) return;
-        g.fillStyle = curves[k].color;
-        g.beginPath();
-        g.arc(X(x0), Y(y), 4, 0, Math.PI * 2);
-        g.fill();
-      });
-    }
-    lastPlot = () => plot(curves, c, half, x0, vals);
-  }
-
   function run() {
     const src = $('expr').value;
     const x0s = $('x0').value.trim();
@@ -492,29 +405,18 @@ if (typeof document !== 'undefined') {
       $('r1').innerHTML = "f′(x) = " + toText(f1, true);
       $('r2').innerHTML = "f″(x) = " + toText(f2, true);
 
-      const needParams = x0 !== null && missing.length > 0;
-      const vals = x0 !== null && !needParams ? [ev(f, x0), ev(f1, x0), ev(f2, x0)] : null;
-      if (needParams) $('v1').textContent = `ציין ערך ל-${missing.join(', ')} כדי לחשב נקודה`;
-      else $('v1').textContent = vals ? `ב-x = ${fmt(x0)}:  f(${fmt(x0)}) = ${showVal(vals[0])}   ·   f′ = ${showVal(vals[1])}` : '';
+      const vals = x0 !== null && missing.length === 0 ? [ev(f, x0), ev(f1, x0), ev(f2, x0)] : null;
+      $('v1').textContent = vals ? `ב-x = ${fmt(x0)}:  f(${fmt(x0)}) = ${showVal(vals[0])}   ·   f′ = ${showVal(vals[1])}` : '';
       $('v2').textContent = vals ? `ב-x = ${fmt(x0)}:  f″ = ${showVal(vals[2])}` : '';
       $('v2').hidden = !vals;
-      $('v1').hidden = !(vals || needParams);
+      $('v1').hidden = !vals;
 
       $('err').hidden = true;
       $('out').hidden = false;
-      $('plotCard').hidden = missing.length > 0;
-      const c = x0 !== null ? x0 : 0;
-      if (!missing.length) plot([
-        { node: f,  color: css('--f') },
-        { node: f1, color: css('--f1') },
-        { node: f2, color: css('--f2') },
-      ], c, 6, x0, vals);
     } catch (e) {
       $('err').textContent = 'שגיאה: ' + e.message;
       $('err').hidden = false;
       $('out').hidden = true;
-      $('plotCard').hidden = true;
-      lastPlot = null;
     }
   }
 
@@ -570,7 +472,6 @@ if (typeof document !== 'undefined') {
   $('go').onclick = run;
   $('expr').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
   $('x0').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
-  window.addEventListener('resize', () => { if (lastPlot) lastPlot(); });
   $('expr').value = 'x^3 - 2x';
   $('x0').value = '1';
   run();
