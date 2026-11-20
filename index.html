@@ -30,6 +30,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 .item small{color:var(--muted);display:block;font-weight:600}
 .rad{display:inline-flex;align-items:flex-start;white-space:nowrap}
 .radicand{border-top:1.5px solid currentColor;padding:0 .2em;margin-top:.1em;line-height:1.25}
+.preview{margin-top:12px;font-size:1.15rem;min-height:1.5em}
 .frac{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;line-height:1.25;margin:0 .15em}
 .frac>span{padding:0 .25em}
 .frac>span:first-child{border-bottom:1.5px solid currentColor}
@@ -54,6 +55,7 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
       <input type="text" id="expr" placeholder="למשל: x^3 - 2x + sin(x)" autocomplete="off" spellcheck="false">
       <button class="primary" id="go">חשב</button>
     </div>
+    <div class="preview math" id="preview" hidden></div>
     <div class="row" style="margin-top:12px">
       <input type="text" id="x0" class="small" placeholder="x = (לא חובה)" autocomplete="off" spellcheck="false">
     </div>
@@ -382,8 +384,21 @@ function analyze(src) {
 if (typeof document !== 'undefined') {
   const $ = id => document.getElementById(id);
   const showVal = v => Number.isFinite(v) ? fmt(v) : 'לא מוגדר';
+  // תצוגה מקדימה של הביטוי כפי שהוקלד (שבר, שורש)
+  function updatePreview() {
+    const el = $('preview');
+    try {
+      el.innerHTML = 'f(x) = ' + toText(parse($('expr').value), true);
+      el.hidden = false;
+    } catch (e) {
+      el.hidden = true;
+    }
+  }
+  $('expr').addEventListener('input', updatePreview);
+
   function run() {
     const src = $('expr').value;
+    updatePreview();
     const x0s = $('x0').value.trim();
     try {
       const { f, f1, f2 } = analyze(src);
@@ -453,6 +468,7 @@ if (typeof document !== 'undefined') {
       el.setSelectionRange(pos, pos);
     }
     el.focus();
+    updatePreview();
   }
   const kp = $('keypad');
   KEYS.forEach(([label, val, cls]) => {
@@ -478,6 +494,7 @@ if (typeof document !== 'undefined') {
   $('x0').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
   $('expr').value = 'x^3 - 2x';
   $('x0').value = '1';
+  updatePreview();
   run();
 }
 </script>
