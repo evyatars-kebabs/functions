@@ -450,9 +450,62 @@ function polyNode(p) {
   }
   return acc === null ? num(0) : acc;
 }
+// הוצאת גורם משותף מסכום: 2x^3 + 4x -> 2·x·(x^2 + 2)
+// (רק כשכל האיברים בלי מכנה ועם מקדמים שלמים)
+function factorCommon(node) {
+  const terms = sumTerms(node, 1, []);
+  if (terms.length < 2) return node;
+  const infos = terms.map(({ sign, t }) => ({ sign, p: productCore(t) }));
+  if (infos.some(i => i.p.zero || i.p.denF.length || !Number.isInteger(i.p.c) || i.p.d !== 1)) return node;
+  let G = 0;
+  for (const i of infos) G = gcd(G, i.p.c);
+  // מפתח של כל בסיס בונה: בסיס -> {base, exp}
+  const expsOf = pp => {
+    const m = new Map();
+    for (const f of pp.numF) {
+      const isPow = f.t === 'bin' && f.op === '^' && isNum(f.b);
+      const base = isPow ? f.a : f, e = isPow ? f.b.v : 1, k = toText(base);
+      m.set(k, { base, exp: (m.get(k) ? m.get(k).exp : 0) + e });
+    }
+    return m;
+  };
+  let common = expsOf(infos[0].p);
+  for (const i of infos.slice(1)) {
+    const m = expsOf(i.p);
+    for (const k of [...common.keys()]) {
+      const w = m.get(k);
+      if (!w) common.delete(k);
+      else common.set(k, { base: common.get(k).base, exp: Math.min(common.get(k).exp, w.exp) });
+    }
+  }
+  common = new Map([...common].filter(([, v]) => v.exp > 0));
+  if (G <= 1 && common.size === 0) return node;
+  const F = [...(G > 1 ? [num(G)] : []), ...[...common.values()].map(({ base, exp }) => (exp === 1 ? base : bin('^', base, num(exp))))];
+  // איברים אחרי ההוצאה
+  const items = infos.map(({ sign, p }) => {
+    const m = expsOf(p);
+    const numF = [];
+    for (const [k, v] of m) {
+      const rem = v.exp - (common.has(k) ? common.get(k).exp : 0);
+      if (rem > 0) numF.push(rem === 1 ? v.base : bin('^', v.base, num(rem)));
+    }
+    return { sign: sign * p.sign, t: buildCore(numF, [], p.c / G, 1) };
+  });
+  // מסמנים את המינוס מחוץ לסוגריים אם האיבר הראשון שלילי
+  const lead = items[0].sign < 0 ? -1 : 1;
+  let acc = null;
+  for (const it of items) {
+    const sg = it.sign * lead;
+    acc = acc === null ? (sg < 0 ? neg(it.t) : it.t) : bin(sg < 0 ? '-' : '+', acc, it.t);
+  }
+  const fProd = F.reduce((a, f) => (a ? bin('*', a, f) : f), null);
+  const out = bin('*', fProd, acc);
+  return lead < 0 ? neg(out) : out;
+}
+
 // מחזיר ביטוי מצומצם בצורת שבר יחיד, או null
 function rationalize(n) {
-  const r = toRat(n);
+  const r = toRat(simp(n));
   if (!r) return null;
   let N = ptrim(r.n), D = ptrim(r.d);
   if (pzero(N)) return num(0);
@@ -472,8 +525,9 @@ function rationalize(n) {
   N = ptrim(N); D = ptrim(D);
   if (D[D.length - 1] < 0) { N = N.map(c => -c); D = D.map(c => -c); }
   const nn = polyNode(N);
-  if (D.length === 1 && D[0] === 1) return nn;
-  return bin('/', nn, polyNode(D));
+  const nn2 = factorCommon(nn);
+  if (D.length === 1 && D[0] === 1) return nn2;
+  return bin('/', nn2, factorCommon(polyNode(D)));
 }
 
 // ---------- פישוט ----------
@@ -599,10 +653,34 @@ function ev(n, x) {
 
 function analyze(src) {
   const f  = simp(parse(src));
-  // בוחרים את הצורה הקצרה יותר: שבר יחיד מצומצם, או הצורה המפורקת
-  const best = (r, alt) => (r && toText(r).length <= toText(alt).length ? r : alt);
-  const f1 = best(rationalize(d(f)), simp(d(f)));
-  const f2 = best(rationalize(d(f1)), simp(d(f1)));
+  // מוציאים גורם משותף למונה ולמכנה, ובוחרים את הצורה הקצרה יותר
+  // מצמצם גורמים משותפים בין מונה למכנה (לפני פיזור), ואז מוציא גורם משותף בכל חלק
+  const factorFrac = n => {
+    let m = n;
+    if (n.t === 'bin' && n.op === '/') {
+      // מוציאים גורם מהמונה קודם, כדי שאפשר יהיה לצמצם אותו מול המכנה
+      const p = productCore(bin('/', factorCommon(n.a), n.b));
+      if (!p.zero) {
+        const nodesN = p.numF.slice();
+        if (p.c !== 1 || !nodesN.length) nodesN.unshift(num(p.c));
+        const nodesD = p.denF.slice();
+        if (p.d !== 1) nodesD.unshift(num(p.d));
+        let N0 = nodesN.reduce((a, f) => (a ? bin('*', a, f) : f), null);
+        if (p.sign < 0) N0 = neg(N0);
+        m = nodesD.length ? bin('/', N0, nodesD.reduce((a, f) => (a ? bin('*', a, f) : f), null)) : N0;
+      }
+    }
+    if (m.t === 'bin' && m.op === '/') return bin('/', factorCommon(m.a), factorCommon(m.b));
+    return factorCommon(m);
+  };
+  const choose = (r, alt) => {
+    const A = r && factorFrac(r), B = factorFrac(alt);
+    return A && toText(A).length <= toText(B).length ? A : B;
+  };
+  // הנגזרת השנייה מחושבת מהנגזרת הראשונה הלא-מפורקת (קצרה יותר)
+  const raw1 = (r => (r && toText(r).length <= toText(simp(d(f))).length ? r : simp(d(f))))(rationalize(d(f)));
+  const f1 = choose(rationalize(d(f)), simp(d(f)));
+  const f2 = choose(rationalize(d(raw1)), simp(d(raw1)));
   return { f, f1, f2 };
 }
 
