@@ -19,6 +19,7 @@ label{display:block;font-weight:600;margin-bottom:6px}
 .row{display:flex;gap:10px;flex-wrap:wrap}
 input[type=text]{flex:1 1 280px;font:inherit;font-size:1.05rem;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--ink);direction:ltr;text-align:left}
 input.small{flex:0 1 200px}
+input.tiny{flex:1 1 90px}
 button{font:inherit;padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--ink);cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff;font-weight:600}
 .examples{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
@@ -57,9 +58,14 @@ canvas{width:100%;height:260px;display:block}
     <div class="row" style="margin-top:12px">
       <input type="text" id="x0" class="small" placeholder="x = (לא חובה)" autocomplete="off" spellcheck="false">
     </div>
+    <div class="row" style="margin-top:12px">
+      <input type="text" id="pa" class="tiny" placeholder="a = (לא חובה)" autocomplete="off" spellcheck="false">
+      <input type="text" id="pb" class="tiny" placeholder="b = (לא חובה)" autocomplete="off" spellcheck="false">
+      <input type="text" id="pc" class="tiny" placeholder="c = (לא חובה)" autocomplete="off" spellcheck="false">
+    </div>
     <div class="keypad" id="keypad"></div>
     <div class="examples" id="examples"></div>
-    <p class="help">אופרטורים: + − · / ^ · סוגריים · כפל משתמע (2x) · פונקציות: sin cos tan exp ln log (= log₁₀) sqrt · קבועים: pi e</p>
+    <p class="help">אופרטורים: + − · / ^ · סוגריים · כפל משתמע (2x) · פונקציות: sin cos tan exp ln log (= log₁₀) sqrt · קבועים: pi e · פרמטרים: a b c (ערכים אופציונליים לחישוב נקודה)</p>
   </div>
 
   <p class="err card" id="err" hidden></p>
@@ -89,6 +95,8 @@ const FUNCS = {
   ln: Math.log, log: Math.log10, sqrt: Math.sqrt
 };
 const CONSTS = { pi: { name: 'π', v: Math.PI }, e: { name: 'e', v: Math.E } };
+const PARAMS = {};   // ערכים מספריים לפרמטרים a, b, c (אם הוזנו)
+const PARAM_NAMES = ['a', 'b', 'c'];
 
 const num  = v => ({ t: 'num', v });
 const bin  = (op, a, b) => ({ t: 'bin', op, a, b });
@@ -168,6 +176,7 @@ function parse(src) {
     if (t.t === 'id') {
       p++;
       if (t.v === 'x') return { t: 'var' };
+      if (PARAM_NAMES.includes(t.v)) return { t: 'param', name: t.v };
       if (CONSTS[t.v]) return { t: 'const', name: CONSTS[t.v].name, v: CONSTS[t.v].v };
       if (FUNCS[t.v]) {
         if (!peek() || peek().t !== '(') throw new Error(`אחרי ${t.v} צריך סוגריים, למשל ${t.v}(x)`);
@@ -190,6 +199,15 @@ function parse(src) {
 const isNum  = n => n.t === 'num';
 const isZero = n => isNum(n) && n.v === 0;
 const isOne  = n => isNum(n) && n.v === 1;
+// שמות הפרמטרים שמופיעים בביטוי
+function paramsIn(n, out = new Set()) {
+  switch (n.t) {
+    case 'param': out.add(n.name); break;
+    case 'neg': case 'fn': paramsIn(n.a, out); break;
+    case 'bin': paramsIn(n.a, out); paramsIn(n.b, out); break;
+  }
+  return out;
+}
 function hasVar(n) {
   switch (n.t) {
     case 'var': return true;
@@ -213,7 +231,7 @@ function foldOp(op, a, b) {
 // ---------- פישוט ----------
 function simp(n) {
   switch (n.t) {
-    case 'num': case 'var': case 'const': return n;
+    case 'num': case 'var': case 'const': case 'param': return n;
     case 'fn': {
       const a = simp(n.a);
       if (n.name === 'ln' && a.t === 'const' && a.name === 'e') return num(1);
@@ -279,7 +297,7 @@ function simp(n) {
 // ---------- גזירה ----------
 function d(n) {
   switch (n.t) {
-    case 'num': case 'const': return num(0);
+    case 'num': case 'const': case 'param': return num(0);
     case 'var': return num(1);
     case 'neg': return neg(d(n.a));
     case 'bin': {
@@ -330,7 +348,7 @@ function toText(n, html = false) {
   switch (n.t) {
     case 'num':   return n.v < 0 ? '−' + fmt(-n.v) : fmt(n.v);
     case 'var':   return 'x';
-    case 'const': return n.name;
+    case 'const': case 'param': return n.name;
     case 'neg':   return '−' + w(n.a, 4);
     case 'fn':    return `${LABEL[n.name] || n.name}(${toText(n.a, html)})`;
     case 'bin': {
@@ -351,6 +369,7 @@ function toText(n, html = false) {
 function ev(n, x) {
   switch (n.t) {
     case 'num': case 'const': return n.v;
+    case 'param': return n.name in PARAMS ? PARAMS[n.name] : NaN;
     case 'var': return x;
     case 'neg': return -ev(n.a, x);
     case 'fn':  return FUNCS[n.name](ev(n.a, x));
@@ -451,6 +470,16 @@ if (typeof document !== 'undefined') {
     const x0s = $('x0').value.trim();
     try {
       const { f, f1, f2 } = analyze(src);
+      for (const k of PARAM_NAMES) {
+        const ps = $('p' + k).value.trim();
+        if (!ps) { delete PARAMS[k]; continue; }
+        const pn = simp(parse(ps));
+        if (hasVar(pn)) throw new Error(`הערך של ${k} חייב להיות מספר`);
+        const pv = ev(pn, 0);
+        if (!Number.isFinite(pv)) throw new Error(`הערך של ${k} לא תקין`);
+        PARAMS[k] = pv;
+      }
+      const missing = [...paramsIn(f)].filter(k => !(k in PARAMS));
       let x0 = null;
       if (x0s) {
         const n = simp(parse(x0s));
@@ -463,17 +492,19 @@ if (typeof document !== 'undefined') {
       $('r1').innerHTML = "f′(x) = " + toText(f1, true);
       $('r2').innerHTML = "f″(x) = " + toText(f2, true);
 
-      const vals = x0 !== null ? [ev(f, x0), ev(f1, x0), ev(f2, x0)] : null;
-      $('v1').textContent = vals ? `ב-x = ${fmt(x0)}:  f(${fmt(x0)}) = ${showVal(vals[0])}   ·   f′ = ${showVal(vals[1])}` : '';
+      const needParams = x0 !== null && missing.length > 0;
+      const vals = x0 !== null && !needParams ? [ev(f, x0), ev(f1, x0), ev(f2, x0)] : null;
+      if (needParams) $('v1').textContent = `ציין ערך ל-${missing.join(', ')} כדי לחשב נקודה`;
+      else $('v1').textContent = vals ? `ב-x = ${fmt(x0)}:  f(${fmt(x0)}) = ${showVal(vals[0])}   ·   f′ = ${showVal(vals[1])}` : '';
       $('v2').textContent = vals ? `ב-x = ${fmt(x0)}:  f″ = ${showVal(vals[2])}` : '';
       $('v2').hidden = !vals;
-      $('v1').hidden = !vals;
+      $('v1').hidden = !(vals || needParams);
 
       $('err').hidden = true;
       $('out').hidden = false;
-      $('plotCard').hidden = false;
+      $('plotCard').hidden = missing.length > 0;
       const c = x0 !== null ? x0 : 0;
-      plot([
+      if (!missing.length) plot([
         { node: f,  color: css('--f') },
         { node: f1, color: css('--f1') },
         { node: f2, color: css('--f2') },
@@ -492,13 +523,18 @@ if (typeof document !== 'undefined') {
     ['x', 'x', ''], ['π', 'pi', ''], ['e', 'e', ''], ['^', '^', 'op'], ['²', '^2', 'op'], ['eˣ', 'exp(', 'fn'],
     ['(', '(', ''], [')', ')', ''], ['+', '+', 'op'], ['−', '-', 'op'], ['·', '*', 'op'], ['/', '/', 'op'],
     ['sin', 'sin(', 'fn'], ['cos', 'cos(', 'fn'], ['tan', 'tan(', 'fn'], ['ln', 'ln(', 'fn'], ['log', 'log(', 'fn'], ['√', 'sqrt(', 'fn'],
-    ['⌫', 'BS', 'ctl'], ['C', 'CLR', 'ctl'], ['חשב', 'RUN', 'op'], ['2', '2', ''],
+    ['a', 'a', ''], ['b', 'b', ''], ['c', 'c', ''], ['2', '2', ''],
+    ['⌫', 'BS', 'ctl'], ['C', 'CLR', 'ctl'], ['חשב', 'RUN', 'op'],
   ];
   function keyInsert(t) {
     const el = $('expr');
     const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? s;
     if (t === 'BS') {
-      const from = s === e ? Math.max(0, s - 1) : s;
+      let from = s === e ? Math.max(0, s - 1) : s;
+      if (s === e) {
+        const m = /(sin|cos|tan|exp|ln|log|sqrt)\($|pi$/.exec(el.value.slice(0, s));
+        if (m) from = s - m[0].length;
+      }
       el.value = el.value.slice(0, from) + el.value.slice(e);
       el.setSelectionRange(from, from);
     } else if (t === 'CLR') {
