@@ -27,6 +27,9 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 .res{display:grid;gap:10px}
 .item{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .item small{color:var(--muted);display:block;font-weight:600}
+.frac{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;line-height:1.25;margin:0 .15em}
+.frac>span{padding:0 .25em}
+.frac>span:first-child{border-bottom:1.5px solid currentColor}
 .math{direction:ltr;unicode-bidi:isolate;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.05rem;word-break:break-word;text-align:left}
 .v{color:var(--muted);font-size:.9rem;direction:ltr;unicode-bidi:isolate;text-align:left;margin-top:4px}
 .err{color:var(--err);font-weight:600;margin:0}
@@ -322,20 +325,22 @@ const PREC = n => {
 const fmt = v => String(parseFloat(v.toPrecision(10)));
 const LABEL = { log: 'log10' };
 
-function toText(n) {
-  const w = (c, min) => PREC(c) < min ? `(${toText(c)})` : toText(c);
+function toText(n, html = false) {
+  const w = (c, min) => PREC(c) < min ? `(${toText(c, html)})` : toText(c, html);
   switch (n.t) {
     case 'num':   return n.v < 0 ? '−' + fmt(-n.v) : fmt(n.v);
     case 'var':   return 'x';
     case 'const': return n.name;
     case 'neg':   return '−' + w(n.a, 4);
-    case 'fn':    return `${LABEL[n.name] || n.name}(${toText(n.a)})`;
+    case 'fn':    return `${LABEL[n.name] || n.name}(${toText(n.a, html)})`;
     case 'bin': {
       const { op, a, b } = n;
       if (op === '+') return `${w(a, 1)} + ${w(b, 1)}`;
       if (op === '-') return `${w(a, 1)} − ${w(b, 2)}`;
       if (op === '*') return `${w(a, 2)}·${w(b, 4)}`;
-      if (op === '/') return `${w(a, 2)} / ${w(b, 4)}`;
+      if (op === '/') return html
+        ? `<span class="frac"><span>${toText(a, html)}</span><span>${toText(b, html)}</span></span>`
+        : `${w(a, 2)} / ${w(b, 4)}`;
       return `${w(a, 5)}^${w(b, 5)}`;
     }
   }
@@ -454,9 +459,9 @@ if (typeof document !== 'undefined') {
         if (!Number.isFinite(x0)) throw new Error('הנקודה לא תקינה');
       }
 
-      $('r0').textContent = 'f(x) = ' + toText(f);
-      $('r1').textContent = "f′(x) = " + toText(f1);
-      $('r2').textContent = "f″(x) = " + toText(f2);
+      $('r0').innerHTML = 'f(x) = ' + toText(f, true);
+      $('r1').innerHTML = "f′(x) = " + toText(f1, true);
+      $('r2').innerHTML = "f″(x) = " + toText(f2, true);
 
       const vals = x0 !== null ? [ev(f, x0), ev(f1, x0), ev(f2, x0)] : null;
       $('v1').textContent = vals ? `ב-x = ${fmt(x0)}:  f(${fmt(x0)}) = ${showVal(vals[0])}   ·   f′ = ${showVal(vals[1])}` : '';
