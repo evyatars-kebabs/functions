@@ -221,6 +221,111 @@ function foldOp(op, a, b) {
   return NaN;
 }
 
+// ---------- איחוד איברים בסכום: 2x + 3x - 1 - 4 -> 5x - 5 ----------
+function sumTerms(n, sign, out) {
+  if (n.t === 'bin' && (n.op === '+' || n.op === '-')) {
+    sumTerms(n.a, sign, out);
+    sumTerms(n.b, n.op === '-' ? -sign : sign, out);
+  } else if (n.t === 'neg') {
+    sumTerms(n.a, -sign, out);
+  } else {
+    out.push({ sign, t: n });
+  }
+  return out;
+}
+function ratio(x) {   // מחזיר שבר [n, d] שווה ל-x (אם יש כזה בגודל סביר)
+  for (let d = 1; d <= 1000; d++) {
+    const n = Math.round(x * d);
+    if (Math.abs(n / d - x) < 1e-9) return [n, d];
+  }
+  return null;
+}
+function collectSum(expr) {
+  const groups = new Map();
+  for (const { sign, t } of sumTerms(expr, 1, [])) {
+    const p = productCore(t);
+    if (p.zero) continue;
+    const coef = sign * p.sign * p.c / p.d;
+    const hasCore = p.numF.length > 0 || p.denF.length > 0;
+    const key = hasCore ? toText(buildCore(p.numF, p.denF, 1, 1)) : '';
+    const g = groups.get(key) || { coef: 0, numF: p.numF, denF: p.denF, hasCore };
+    g.coef += coef;
+    groups.set(key, g);
+  }
+  let acc = null;
+  for (const { coef, numF, denF, hasCore } of groups.values()) {
+    if (Math.abs(coef) < 1e-12) continue;
+    const mag = Math.abs(coef);
+    let body;
+    if (!hasCore) body = num(mag);
+    else {
+      const r = ratio(mag);
+      body = r ? buildCore(numF, denF, r[0], r[1]) : bin('*', num(mag), buildCore(numF, denF, 1, 1));
+    }
+    if (acc === null) acc = coef < 0 ? neg(body) : body;
+    else acc = bin(coef < 0 ? '-' : '+', acc, body);
+  }
+  return acc === null ? num(0) : acc;
+}
+
+// ---------- איחוד גורמים במכפלה/מנה: x·x -> x^2, x^2/x -> x ----------
+function parts(n, s, m) {
+  if (n.t === 'bin') {
+    if (n.op === '*') { parts(n.a, s, m); parts(n.b, s, m); return; }
+    if (n.op === '/') { parts(n.a, s, m); parts(n.b, s, -m); return; }
+    if (n.op === '^' && isNum(n.b)) { addBase(s, n.a, n.b.v * m); return; }
+  }
+  if (n.t === 'num') { if (m === 1) s.coef *= n.v; else s.dcoef *= n.v; return; }
+  if (n.t === 'neg') {
+    if (m === 1) s.coef *= -1; else s.dcoef *= -1;
+    parts(n.a, s, m);
+    return;
+  }
+  addBase(s, n, m);
+}
+function addBase(s, base, e) {
+  const k = toText(base);
+  const g = s.bases.get(k) || { base, exp: 0 };
+  g.exp += e;
+  s.bases.set(k, g);
+}
+const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+function productCore(n) {
+  const s = { coef: 1, dcoef: 1, bases: new Map() };
+  parts(n, s, 1);
+  if (s.coef === 0) return { zero: true };
+  let c = Math.abs(s.coef), d = Math.abs(s.dcoef);
+  const sign = (s.coef * s.dcoef < 0) ? -1 : 1;
+  if (Number.isInteger(c) && Number.isInteger(d) && d !== 0) {
+    const g = gcd(c, d) || 1;
+    c /= g; d /= g;
+  }
+  const numF = [], denF = [];
+  for (const { base, exp } of s.bases.values()) {
+    if (exp === 0) continue;
+    const e = Math.abs(exp);
+    const f = e === 1 ? base : bin('^', base, num(e));
+    (exp > 0 ? numF : denF).push(f);
+  }
+  return { zero: false, sign, c, d, numF, denF };
+}
+function buildCore(numF, denF, c, d) {
+  const nodes = numF.slice();
+  if (c !== 1 || nodes.length === 0) nodes.unshift(num(c));
+  const N = nodes.reduce((acc, f) => (acc ? bin('*', acc, f) : f), null);
+  const dnodes = denF.slice();
+  if (d !== 1) dnodes.unshift(num(d));
+  if (!dnodes.length) return N;
+  const D = dnodes.reduce((acc, f) => (acc ? bin('*', acc, f) : f), null);
+  return bin('/', N, D);
+}
+function productSimp(n) {
+  const p = productCore(n);
+  if (p.zero) return num(0);
+  const res = buildCore(p.numF, p.denF, p.c, p.d);
+  return p.sign < 0 ? neg(res) : res;
+}
+
 // ---------- פישוט ----------
 function simp(n) {
   switch (n.t) {
@@ -243,45 +348,15 @@ function simp(n) {
         const r = foldOp(op, a.v, b.v);
         if (Number.isFinite(r)) return num(r);
       }
-      switch (op) {
-        case '+':
-          if (isZero(a)) return b;
-          if (isZero(b)) return a;
-          if (b.t === 'neg') return bin('-', a, b.a);
-          if (isNum(b) && b.v < 0) return bin('-', a, num(-b.v));
-          if (a.t === 'neg') return bin('-', b, a.a);
-          return bin('+', a, b);
-        case '-':
-          if (isZero(b)) return a;
-          if (isZero(a)) return simp(neg(b));
-          if (b.t === 'neg') return bin('+', a, b.a);
-          if (isNum(b) && b.v < 0) return bin('+', a, num(-b.v));
-          return bin('-', a, b);
-        case '*':
-          if (isZero(a) || isZero(b)) return num(0);
-          if (isOne(a)) return b;
-          if (isOne(b)) return a;
-          if (isNum(a) && a.v === -1) return simp(neg(b));
-          if (isNum(b) && b.v === -1) return simp(neg(a));
-          // איחוד מקדמים: c1·(c2·X) -> (c1·c2)·X
-          if (isNum(a) && b.t === 'bin' && b.op === '*' && isNum(b.a)) return simp(bin('*', num(a.v * b.a.v), b.b));
-          if (isNum(b) && a.t === 'bin' && a.op === '*' && isNum(a.a)) return simp(bin('*', num(b.v * a.a.v), a.b));
-          if (a.t === 'neg') return simp(neg(bin('*', a.a, b)));
-          if (b.t === 'neg') return simp(neg(bin('*', a, b.a)));
-          return bin('*', a, b);
-        case '/':
-          if (isZero(a)) return num(0);
-          if (isOne(b)) return a;
-          if (a.t === 'neg') return simp(neg(bin('/', a.a, b)));
-          if (b.t === 'neg') return simp(neg(bin('/', a, b.a)));
-          if (!isZero(b) && toText(a) === toText(b)) return num(1);
-          return bin('/', a, b);
-        case '^':
-          if (isZero(b)) return num(1);
-          if (isOne(b)) return a;
-          if (isOne(a)) return num(1);
-          return bin('^', a, b);
-      }
+      if (op === '+' || op === '-') return collectSum(bin(op, a, b));
+      if (op === '*' || op === '/') return productSimp(bin(op, a, b));
+      // op === '^'
+      if (isZero(b)) return num(1);
+      if (isOne(b)) return a;
+      if (isOne(a)) return num(1);
+      if (a.t === 'bin' && a.op === '^' && isNum(a.b) && isNum(b) && Number.isInteger(a.b.v) && Number.isInteger(b.v))
+        return bin('^', a.a, num(a.b.v * b.v));   // (u^m)^k = u^(m·k)
+      return bin('^', a, b);
     }
   }
   return n;
@@ -342,7 +417,7 @@ function toText(n, html = false) {
     case 'num':   return n.v < 0 ? '−' + fmt(-n.v) : fmt(n.v);
     case 'var':   return 'x';
     case 'const': case 'param': return n.name;
-    case 'neg':   return '−' + w(n.a, 4);
+    case 'neg':   return '−' + w(n.a, 2);
     case 'fn':
       if (html && n.name === 'sqrt') return `<span class="rad">√<span class="radicand">${toText(n.a, html)}</span></span>`;
       return `${LABEL[n.name] || n.name}(${toText(n.a, html)})`;
