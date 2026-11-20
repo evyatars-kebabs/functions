@@ -33,6 +33,11 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 canvas{width:100%;height:260px;display:block}
 .legend{display:flex;gap:14px;flex-wrap:wrap;font-size:.9rem;margin-top:10px;direction:ltr}
 .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-inline-end:6px}
+.keypad{display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-top:12px;direction:ltr}
+.keypad button{padding:10px 0;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1rem;min-width:0}
+.keypad button.fn{font-size:.9rem}
+.keypad button.op{color:var(--accent);font-weight:600}
+.keypad button.ctl{background:var(--bg);color:var(--muted)}
 </style>
 </head>
 <body>
@@ -49,6 +54,7 @@ canvas{width:100%;height:260px;display:block}
     <div class="row" style="margin-top:12px">
       <input type="text" id="x0" class="small" placeholder="x = (לא חובה)" autocomplete="off" spellcheck="false">
     </div>
+    <div class="keypad" id="keypad"></div>
     <div class="examples" id="examples"></div>
     <p class="help">אופרטורים: + − · / ^ · סוגריים · כפל משתמע (2x) · פונקציות: sin cos tan exp ln log (= log₁₀) sqrt · קבועים: pi e</p>
   </div>
@@ -475,6 +481,41 @@ if (typeof document !== 'undefined') {
       lastPlot = null;
     }
   }
+
+  // מקלדת מובנית: מכניסה טקסט במיקום הסמן בשדה הביטוי
+  const KEYS = [
+    ['x', 'x', ''], ['π', 'pi', ''], ['e', 'e', ''], ['^', '^', 'op'], ['²', '^2', 'op'], ['eˣ', 'exp(', 'fn'],
+    ['(', '(', ''], [')', ')', ''], ['+', '+', 'op'], ['−', '-', 'op'], ['·', '*', 'op'], ['/', '/', 'op'],
+    ['sin', 'sin(', 'fn'], ['cos', 'cos(', 'fn'], ['tan', 'tan(', 'fn'], ['ln', 'ln(', 'fn'], ['log', 'log(', 'fn'], ['√', 'sqrt(', 'fn'],
+    ['⌫', 'BS', 'ctl'], ['C', 'CLR', 'ctl'], ['חשב', 'RUN', 'op'], ['2', '2', ''],
+  ];
+  function keyInsert(t) {
+    const el = $('expr');
+    const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? s;
+    if (t === 'BS') {
+      const from = s === e ? Math.max(0, s - 1) : s;
+      el.value = el.value.slice(0, from) + el.value.slice(e);
+      el.setSelectionRange(from, from);
+    } else if (t === 'CLR') {
+      el.value = '';
+    } else if (t === 'RUN') {
+      run();
+    } else {
+      el.value = el.value.slice(0, s) + t + el.value.slice(e);
+      const pos = s + t.length;
+      el.setSelectionRange(pos, pos);
+    }
+    el.focus();
+  }
+  const kp = $('keypad');
+  KEYS.forEach(([label, val, cls]) => {
+    const b = document.createElement('button');
+    b.textContent = label;
+    b.className = cls;
+    b.onclick = () => keyInsert(val);
+    kp.appendChild(b);
+  });
+  $('expr').setAttribute('inputmode', 'none');
 
   const EXAMPLES = ['x^3 - 2x', 'sin(x)·x^2', 'e^(2x)', 'ln(x^2 + 1)', 'sqrt(x) / x', 'x^x', 'tan(x)'];
   const ex = $('examples');
