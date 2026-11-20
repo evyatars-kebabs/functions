@@ -380,6 +380,102 @@ function negate(n) {
   return neg(n);
 }
 
+// ---------- נגזרת כשבר אחד: מונה ומכנה פולינומיים מצומצמים ----------
+// פולינומים כמערך מקדמים (מהנמוך לגבוה). ביטויים עם פרמטרים או פונקציות לא נכנסים לכאן.
+const pzero = p => p.every(c => Math.abs(c) < 1e-12);
+function ptrim(p) { let n = p.length; while (n > 1 && Math.abs(p[n - 1]) < 1e-12) n--; return p.slice(0, n); }
+function padd(p, q) {
+  const r = [];
+  for (let i = 0; i < Math.max(p.length, q.length); i++) r.push((p[i] || 0) + (q[i] || 0));
+  return ptrim(r);
+}
+function pmul(p, q) {
+  const r = new Array(p.length + q.length - 1).fill(0);
+  p.forEach((a, i) => q.forEach((b, j) => { r[i + j] += a * b; }));
+  return ptrim(r);
+}
+function ppow(p, k) { let r = [1]; for (let i = 0; i < k; i++) r = pmul(r, p); return r; }
+function pdivmod(a, b) {
+  let r = ptrim(a).slice();
+  const q = new Array(Math.max(1, r.length - b.length + 1)).fill(0);
+  while (r.length >= b.length && !pzero(r)) {
+    const k = r.length - b.length, c = r[r.length - 1] / b[b.length - 1];
+    q[k] = c;
+    for (let i = 0; i < b.length; i++) r[i + k] -= c * b[i];
+    r.pop();
+  }
+  return [ptrim(q), ptrim(r.length ? r : [0])];
+}
+function pgcd(a, b) {
+  a = ptrim(a); b = ptrim(b);
+  while (!pzero(b)) { const r = pdivmod(a, b)[1]; a = b; b = r; }
+  return a;
+}
+// ביטוי -> {n, d} של פולינומים, או null אם יש בו דבר שאינו רציונלי
+function toRat(n) {
+  switch (n.t) {
+    case 'num': return { n: [n.v], d: [1] };
+    case 'var': return { n: [0, 1], d: [1] };
+    case 'neg': { const a = toRat(n.a); return a && { n: pmul(a.n, [-1]), d: a.d }; }
+    case 'bin': {
+      const a = toRat(n.a), b = a && toRat(n.b);
+      if (!a || !b) return null;
+      switch (n.op) {
+        case '+': return { n: padd(pmul(a.n, b.d), pmul(b.n, a.d)), d: pmul(a.d, b.d) };
+        case '-': return { n: padd(pmul(a.n, b.d), pmul(b.n, a.d).map(c => -c)), d: pmul(a.d, b.d) };
+        case '*': return { n: pmul(a.n, b.n), d: pmul(a.d, b.d) };
+        case '/': return pzero(b.n) ? null : { n: pmul(a.n, b.d), d: pmul(a.d, b.n) };
+        case '^': {
+          if (!isNum(n.b) || !Number.isInteger(n.b.v) || Math.abs(n.b.v) > 12) return null;
+          const k = n.b.v;
+          if (k >= 0) return { n: ppow(a.n, k), d: ppow(a.d, k) };
+          if (pzero(a.n)) return null;
+          return { n: ppow(a.d, -k), d: ppow(a.n, -k) };
+        }
+      }
+      return null;
+    }
+  }
+  return null;
+}
+function polyNode(p) {
+  let acc = null;
+  for (let k = p.length - 1; k >= 0; k--) {
+    const c = p[k];
+    if (c === 0) continue;
+    const mag = Math.abs(c);
+    const mono = k === 0 ? null : (k === 1 ? { t: 'var' } : bin('^', { t: 'var' }, num(k)));
+    const body = mono === null ? num(mag) : (mag === 1 ? mono : bin('*', num(mag), mono));
+    acc = acc === null ? (c < 0 ? neg(body) : body) : bin(c < 0 ? '-' : '+', acc, body);
+  }
+  return acc === null ? num(0) : acc;
+}
+// מחזיר ביטוי מצומצם בצורת שבר יחיד, או null
+function rationalize(n) {
+  const r = toRat(n);
+  if (!r) return null;
+  let N = ptrim(r.n), D = ptrim(r.d);
+  if (pzero(N)) return num(0);
+  const g = pgcd(N, D);
+  N = pdivmod(N, g)[0];
+  D = pdivmod(D, g)[0];
+  // מקדמים שלמים: מכפילים בהכפלה משותפת של המכנים
+  const dens = [];
+  for (const c of [...N, ...D]) { const q = ratio(c); if (!q) return null; dens.push(q[1]); }
+  let L = 1;
+  for (const q of dens) L = L / gcd(L, q) * q;
+  N = N.map(c => Math.round(c * L));
+  D = D.map(c => Math.round(c * L));
+  let G = 0;
+  for (const c of [...N, ...D]) G = gcd(G, Math.abs(c));
+  if (G > 1) { N = N.map(c => c / G); D = D.map(c => c / G); }
+  N = ptrim(N); D = ptrim(D);
+  if (D[D.length - 1] < 0) { N = N.map(c => -c); D = D.map(c => -c); }
+  const nn = polyNode(N);
+  if (D.length === 1 && D[0] === 1) return nn;
+  return bin('/', nn, polyNode(D));
+}
+
 // ---------- פישוט ----------
 function simp(n) {
   switch (n.t) {
@@ -503,8 +599,10 @@ function ev(n, x) {
 
 function analyze(src) {
   const f  = simp(parse(src));
-  const f1 = simp(d(f));
-  const f2 = simp(d(f1));
+  // בוחרים את הצורה הקצרה יותר: שבר יחיד מצומצם, או הצורה המפורקת
+  const best = (r, alt) => (r && toText(r).length <= toText(alt).length ? r : alt);
+  const f1 = best(rationalize(d(f)), simp(d(f)));
+  const f2 = best(rationalize(d(f1)), simp(d(f1)));
   return { f, f1, f2 };
 }
 
