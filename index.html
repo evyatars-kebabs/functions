@@ -228,30 +228,66 @@ function ratio(x) {   // מחזיר שבר [n, d] שווה ל-x (אם יש כז�
   }
   return null;
 }
+function isSum(n) { return n.t === 'bin' && (n.op === '+' || n.op === '-'); }
+// פולינום ב-x (עם פרמטרים): מותר לפזר רק כשכל הגורמים כאלה
+function isPoly(n) {
+  switch (n.t) {
+    case 'num': case 'var': case 'const': case 'param': return true;
+    case 'neg': return isPoly(n.a);
+    case 'bin':
+      if (n.op === '^') return isNum(n.b) && Number.isInteger(n.b.v) && n.b.v >= 0 && isPoly(n.a);
+      return isPoly(n.a) && isPoly(n.b);
+  }
+  return false;
+}
+// כפל שני ביטויים עם פיזור: (a+b)(c+d) -> ac+ad+bc+bd, עם איחוד
+function distribute(A, B) {
+  const ta = sumTerms(A, 1, []), tb = sumTerms(B, 1, []);
+  let acc = null;
+  for (const x of ta) for (const y of tb) {
+    let pr = productSimp(bin('*', x.t, y.t));
+    if (x.sign * y.sign < 0) pr = neg(pr);
+    acc = acc === null ? pr : bin('+', acc, pr);
+  }
+  return acc === null ? num(0) : collectSum(acc);
+}
 function collectSum(expr) {
-  const groups = new Map();
+  // מפרקים כל איבר לגורמים; מכפלות מפזרות סכומים מתפרקות לאיברים
+  const items = [];
   for (const { sign, t } of sumTerms(expr, 1, [])) {
+    if (t.t === 'bin' && (t.op === '*' || t.op === '/')) {
+      for (const sub of sumTerms(productSimp(t), sign, [])) items.push(sub);
+    } else items.push({ sign, t });
+  }
+  const groups = new Map();
+  for (const { sign, t } of items) {
     const p = productCore(t);
     if (p.zero) continue;
     const coef = sign * p.sign * p.c / p.d;
     const hasCore = p.numF.length > 0 || p.denF.length > 0;
-    const key = hasCore ? toText(buildCore(p.numF, p.denF, 1, 1)) : '';
+    // מפתח שלא תלוי בסדר הגורמים
+    const key = hasCore ? p.numF.map(toText).sort().join('*') + '/' + p.denF.map(toText).sort().join('*') : '';
     const g = groups.get(key) || { coef: 0, numF: p.numF, denF: p.denF, hasCore };
     g.coef += coef;
     groups.set(key, g);
   }
-  let acc = null;
+  const out = [];
   for (const { coef, numF, denF, hasCore } of groups.values()) {
     if (Math.abs(coef) < 1e-12) continue;
     const mag = Math.abs(coef);
+    const sg = coef < 0 ? -1 : 1;
     let body;
     if (!hasCore) body = num(mag);
     else {
       const r = ratio(mag);
       body = r ? buildCore(numF, denF, r[0], r[1]) : bin('*', num(mag), buildCore(numF, denF, 1, 1));
     }
-    if (acc === null) acc = coef < 0 ? neg(body) : body;
-    else acc = bin(coef < 0 ? '-' : '+', acc, body);
+    for (const sub of sumTerms(body, sg, [])) out.push(sub);
+  }
+  let acc = null;
+  for (const { sign, t } of out) {
+    const term = sign < 0 ? neg(t) : t;
+    acc = acc === null ? term : bin(sign < 0 ? '-' : '+', acc, t);
   }
   return acc === null ? num(0) : acc;
 }
@@ -297,7 +333,31 @@ function productCore(n) {
   }
   return { zero: false, sign, c, d, numF, denF };
 }
-function buildCore(numF, denF, c, d) {
+function powSum(a, k) {   // (a)^k לכל k קטן, מפוזר
+  let acc = a;
+  for (let i = 1; i < k; i++) acc = distribute(acc, a);
+  return acc;
+}
+function buildCore(numF0, denF, c, d) {
+  // פישוט מונה: סכומים בתוך מכפלה מתפזרים (אם הביטוי פולינומי ומספר האיברים סביר)
+  let numF = numF0;
+  if (numF.every(isPoly)) {
+    numF = numF.map(f => (f.t === 'bin' && f.op === '^' && isSum(f.a) && isNum(f.b) && Number.isInteger(f.b.v) && f.b.v >= 2 && f.b.v <= 3)
+      ? powSum(f.a, f.b.v) : f);
+  }
+  const sums = numF.filter(isSum);
+  if (sums.length && numF.every(isPoly)) {
+    let count = 1;
+    for (const S of sums) count *= sumTerms(S, 1, []).length;
+    if (count <= 16) {
+      let N = buildCore(numF.filter(f => !isSum(f)), [], c, 1);
+      for (const S of sums) N = distribute(N, S);
+      const dn = denF.slice();
+      if (d !== 1) dn.unshift(num(d));
+      if (!dn.length) return N;
+      return bin('/', N, dn.reduce((acc, f) => (acc ? bin('*', acc, f) : f), null));
+    }
+  }
   const nodes = numF.slice();
   if (c !== 1 || nodes.length === 0) nodes.unshift(num(c));
   const N = nodes.reduce((acc, f) => (acc ? bin('*', acc, f) : f), null);
@@ -311,7 +371,13 @@ function productSimp(n) {
   const p = productCore(n);
   if (p.zero) return num(0);
   const res = buildCore(p.numF, p.denF, p.c, p.d);
-  return p.sign < 0 ? neg(res) : res;
+  return p.sign < 0 ? negate(res) : res;
+}
+// סימן מינוס נכנס למונה: -(a)/b -> (-a)/b, ומונה סכום מתפרק
+function negate(n) {
+  if (n.t === 'bin' && n.op === '/') return bin('/', negate(n.a), n.b);
+  if (isSum(n)) return collectSum(neg(n));
+  return neg(n);
 }
 
 // ---------- פישוט ----------
