@@ -28,6 +28,8 @@ button.primary{background:var(--accent);border-color:var(--accent);color:#fff;fo
 .res{display:grid;gap:10px}
 .item{border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .item small{color:var(--muted);display:block;font-weight:600}
+.rad{display:inline-flex;align-items:flex-start;white-space:nowrap}
+.radicand{border-top:1.5px solid currentColor;padding:0 .2em;margin-top:.1em;line-height:1.25}
 .frac{display:inline-flex;flex-direction:column;vertical-align:middle;text-align:center;line-height:1.25;margin:0 .15em}
 .frac>span{padding:0 .25em}
 .frac>span:first-child{border-bottom:1.5px solid currentColor}
@@ -339,7 +341,9 @@ function toText(n, html = false) {
     case 'var':   return 'x';
     case 'const': case 'param': return n.name;
     case 'neg':   return '−' + w(n.a, 4);
-    case 'fn':    return `${LABEL[n.name] || n.name}(${toText(n.a, html)})`;
+    case 'fn':
+      if (html && n.name === 'sqrt') return `<span class="rad">√<span class="radicand">${toText(n.a, html)}</span></span>`;
+      return `${LABEL[n.name] || n.name}(${toText(n.a, html)})`;
     case 'bin': {
       const { op, a, b } = n;
       if (op === '+') return `${w(a, 1)} + ${w(b, 1)}`;
