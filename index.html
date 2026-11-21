@@ -416,6 +416,11 @@ function productCore(n) {
   }
   return { zero: false, sign, c, d, numF, denF, exps: s.bases };
 }
+function powSum(a, k) {   // (a)^k לכל k קטן, מפוזר
+  let acc = a;
+  for (let i = 1; i < k; i++) acc = distribute(acc, a);
+  return acc;
+}
 function buildCore(numF0, denF, c, d) {
   // פישוט מונה: סכומים בתוך מכפלה מתפזרים (אם הביטוי פולינומי ומספר האיברים סביר)
   let numF = numF0;
@@ -718,9 +723,57 @@ function ev(n, x) {
   return NaN;
 }
 
+// כל סכום שמכיל שברים -> שבר אחד: מכנה משותף (LCM של הגורמים), מונה מאוחד ומצומצם
+function singleFraction(node) {
+  let items = sumTerms(node, 1, []);
+  if (items.length === 1) {
+    // שבר שהמונה שלו סכום: מפרקים את המונה לאיברים (כל איבר מחולק במכנה)
+    const p0 = productCore(items[0].t);
+    const si = p0.zero ? -1 : p0.numF.findIndex(isSum);
+    if (si >= 0) {
+      const rest = p0.numF.filter((_, i) => i !== si);
+      const restNode = buildCore(rest, [], p0.c, 1);
+      const dF = [...(p0.d !== 1 ? [num(p0.d)] : []), ...p0.denF];
+      const denNode = dF.length ? dF.reduce((a, x) => (a ? bin('*', a, x) : x), null) : null;
+      items = sumTerms(p0.numF[si], p0.sign, []).map(({ sign, t }) => ({
+        sign, t: denNode ? bin('/', bin('*', restNode, t), denNode) : bin('*', restNode, t),
+      }));
+    }
+  }
+  const infos = items.map(({ sign, t }) => ({ sign, p: productCore(t) }));
+  if (infos.some(i => i.p.zero || !Number.isInteger(i.p.d))) return null;
+  if (!infos.some(i => i.p.denF.length)) return null;
+  const L = new Map();   // בסיס -> החזקה המקסימלית שנדרשת במכנה
+  let Ld = 1;
+  for (const { p } of infos) {
+    for (const [k, v] of p.exps) {
+      if (v.exp >= 0) continue;
+      const cur = L.get(k);
+      if (!cur || cur.exp < -v.exp) L.set(k, { base: v.base, exp: -v.exp });
+    }
+    Ld = Ld / gcd(Ld, p.d) * p.d;
+  }
+  const numTerms = infos.map(({ sign, p }) => {
+    const numF = [];
+    for (const k of new Set([...p.exps.keys(), ...L.keys()])) {
+      const pe = p.exps.get(k), le = L.get(k);
+      const base = pe ? pe.base : le.base;
+      const e = (pe ? pe.exp : 0) + (le ? le.exp : 0);
+      if (e > 1e-12) numF.push(...expFactors(base, e));
+    }
+    return { sign: sign * p.sign, t: buildCore(numF, [], p.c * Ld / p.d, 1) };
+  });
+  // רק כשמכנה תלוי ב-x: מכנה קבוע (למשל ln(10)) לא הופך את הביטוי לשבר גדול
+  if (![...L.values()].some(v => hasVar(v.base))) return null;
+  const dF = [...(Ld !== 1 ? [num(Ld)] : [])];
+  for (const { base, exp } of L.values()) dF.push(...expFactors(base, exp));
+  if (!dF.length) return null;
+  const D = dF.reduce((a, x) => (a ? bin('*', a, x) : x), null);
+  return bin('/', collectSum(sumOf(numTerms)), D);
+}
+
 function analyze(src) {
-  const f  = simp(parse(src));
-  // מוציאים גורם משותף למונה ולמכנה, ובוחרים את הצורה הקצרה יותר
+  const f = simp(parse(src));
   // מצמצם גורמים משותפים בין מונה למכנה (לפני פיזור), ואז מוציא גורם משותף בכל חלק
   const factorFrac = n => {
     let m = n;
@@ -740,14 +793,17 @@ function analyze(src) {
     if (m.t === 'bin' && m.op === '/') return bin('/', factorCommon(m.a), factorCommon(m.b));
     return factorCommon(m);
   };
-  const choose = (r, alt) => {
-    const A = r && factorFrac(r), B = factorFrac(alt);
-    return A && toText(A).length <= toText(B).length ? A : B;
+  // אם יש שברים: הכל כשבר אחד. אחרת: הצורה הקצרה מבין השתיים
+  const rawPick = e => {
+    const sf = singleFraction(simp(e));
+    if (sf) return sf;
+    const r = rationalize(e), s = simp(e);
+    const A = r && factorFrac(r), B = factorFrac(s);
+    return A && toText(A).length <= toText(B).length ? r : s;
   };
-  // הנגזרת השנייה מחושבת מהנגזרת הראשונה הלא-מפורקת (קצרה יותר)
-  const raw1 = (r => (r && toText(r).length <= toText(simp(d(f))).length ? r : simp(d(f))))(rationalize(d(f)));
-  const f1 = choose(rationalize(d(f)), simp(d(f)));
-  const f2 = choose(rationalize(d(raw1)), simp(d(raw1)));
+  const f1raw = rawPick(d(f));
+  const f1 = factorFrac(f1raw);
+  const f2 = factorFrac(rawPick(d(f1raw)));
   return { f, f1, f2 };
 }
 
