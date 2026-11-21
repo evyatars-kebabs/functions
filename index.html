@@ -724,7 +724,12 @@ function toText(n, html = false) {
       const { op, a, b } = n;
       if (op === '+') return `${w(a, 1)} + ${w(b, 1)}`;
       if (op === '-') return `${w(a, 1)} − ${w(b, 2)}`;
-      if (op === '*') return `${w(a, 2)}·${w(b, 4)}`;
+      if (op === '*') {
+        // בלי נקודת כפל בין מספר (או π/e) למשתנה: 2x, 3x^2, πx
+        const L = w(a, 2), R = w(b, 4);
+        const noDot = /^x(<sup>|\^|$)/.test(R) && /(\d|π|e)$/.test(L);
+        return L + (noDot ? '' : '·') + R;
+      }
       if (op === '/') return html
         ? `<span class="frac"><span>${toText(a, html)}</span><span>${toText(b, html)}</span></span>`
         : `${w(a, 2)} / ${w(b, 4)}`;
