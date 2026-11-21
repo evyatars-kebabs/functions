@@ -225,6 +225,18 @@ function ratio(x) {   // מחזיר שבר [n, d] שווה ל-x (אם יש כז�
 }
 function isSum(n) { return n.t === 'bin' && (n.op === '+' || n.op === '-'); }
 // פולינום ב-x (עם פרמטרים): מותר לפזר רק כשכל הגורמים כאלה
+// ביטוי אלגברי: פולינום, שורש, חילוק וחזקות שלמות
+function isAlg(n) {
+  switch (n.t) {
+    case 'num': case 'var': case 'const': case 'param': return true;
+    case 'neg': return isAlg(n.a);
+    case 'fn': return n.name === 'sqrt' && isAlg(n.a);
+    case 'bin':
+      if (n.op === '^') return isNum(n.b) && isAlg(n.a);
+      return isAlg(n.a) && isAlg(n.b);
+  }
+  return false;
+}
 function isPoly(n) {
   switch (n.t) {
     case 'num': case 'var': case 'const': case 'param': return true;
@@ -246,28 +258,84 @@ function distribute(A, B) {
   }
   return acc === null ? num(0) : collectSum(acc);
 }
+function sumOf(terms) {
+  let acc = null;
+  for (const { sign, t } of terms) {
+    acc = acc === null ? (sign < 0 ? neg(t) : t) : bin(sign < 0 ? '-' : '+', acc, t);
+  }
+  return acc === null ? num(0) : acc;
+}
 function collectSum(expr) {
-  // מפרקים כל איבר לגורמים; מכפלות מפזרות סכומים מתפרקות לאיברים
   const items = [];
   for (const { sign, t } of sumTerms(expr, 1, [])) {
     if (t.t === 'bin' && (t.op === '*' || t.op === '/')) {
       for (const sub of sumTerms(productSimp(t), sign, [])) items.push(sub);
     } else items.push({ sign, t });
   }
-  const groups = new Map();
-  for (const { sign, t } of items) {
+  const groups = new Map();   // איברים בלי מכנה, לפי הגורמים
+  const fracs = new Map();    // איברים עם מכנה, לפי המכנה
+  const direct = [];          // שברים שלא מצטמצמים לאיברים
+  const addPlain = (sign, t) => {
     const p = productCore(t);
-    if (p.zero) continue;
+    if (p.zero) return;
+    if (p.denF.length) {
+      const dKey = p.denF.map(toText).sort().join('*') + '|' + p.d;
+      const f = fracs.get(dKey) || { denF: p.denF, d: p.d, terms: [] };
+      f.terms.push({ sign: sign * p.sign, t: buildCore(p.numF, [], p.c, 1) });
+      fracs.set(dKey, f);
+      return;
+    }
     const coef = sign * p.sign * p.c / p.d;
-    const hasCore = p.numF.length > 0 || p.denF.length > 0;
-    // מפתח שלא תלוי בסדר הגורמים
-    const key = hasCore ? p.numF.map(toText).sort().join('*') + '/' + p.denF.map(toText).sort().join('*') : '';
-    const g = groups.get(key) || { coef: 0, numF: p.numF, denF: p.denF, hasCore };
+    const hasCore = p.numF.length > 0;
+    const key = hasCore ? p.numF.map(toText).sort().join('*') : '';
+    const g = groups.get(key) || { coef: 0, numF: p.numF, hasCore };
     g.coef += coef;
     groups.set(key, g);
+  };
+  for (const { sign, t } of items) addPlain(sign, t);
+  for (const f of fracs.values()) {
+    const dFactors = f.d !== 1 ? [num(f.d), ...f.denF] : f.denF;
+    const D = dFactors.reduce((a, x) => (a ? bin('*', a, x) : x), null);
+    if (!f.denF.some(isSum)) {
+      // מכנה חד-איברי: מחלקים כל איבר בנפרד, וכך מבטלים איברים בחילוק
+      for (const term of f.terms) {
+        for (const sub of sumTerms(term.t, term.sign, [])) {
+          for (const m of sumTerms(productSimp(bin('/', sub.t, D)), sub.sign, [])) {
+            const q = productCore(m.t);
+            if (q.zero) continue;
+            if (q.denF.length) {
+              const Dm = [...(q.d !== 1 ? [num(q.d)] : []), ...q.denF].reduce((a, x) => (a ? bin('*', a, x) : x), null);
+              direct.push({ sign: m.sign * q.sign, num: buildCore(q.numF, [], q.c, 1), D: Dm });
+            } else addPlain(m.sign, m.t);
+          }
+        }
+      }
+      continue;
+    }
+    const numSum = collectSum(sumOf(f.terms));
+    if (numSum.t === 'num' && numSum.v === 0) continue;
+    const lead = sumTerms(numSum, 1, [])[0];
+    if (lead && lead.sign < 0) direct.push({ sign: -1, t: bin('/', collectSum(neg(numSum)), D) });
+    else direct.push({ sign: 1, t: bin('/', numSum, D) });
   }
+  // שברים עם אותו מכנה מאוחדים למונה אחד
+  const byDen = new Map();
   const out = [];
-  for (const { coef, numF, denF, hasCore } of groups.values()) {
+  for (const it of direct) {
+    if (!it.D) { out.push(it); continue; }
+    const k = toText(it.D);
+    const g = byDen.get(k) || { D: it.D, terms: [] };
+    g.terms.push({ sign: it.sign, t: it.num });
+    byDen.set(k, g);
+  }
+  for (const g of byDen.values()) {
+    const numSum = collectSum(sumOf(g.terms));
+    if (numSum.t === 'num' && numSum.v === 0) continue;
+    const lead = sumTerms(numSum, 1, [])[0];
+    if (lead && lead.sign < 0) out.push({ sign: -1, t: bin('/', collectSum(neg(numSum)), g.D) });
+    else out.push({ sign: 1, t: bin('/', numSum, g.D) });
+  }
+  for (const { coef, numF, hasCore } of groups.values()) {
     if (Math.abs(coef) < 1e-12) continue;
     const mag = Math.abs(coef);
     const sg = coef < 0 ? -1 : 1;
@@ -275,16 +343,11 @@ function collectSum(expr) {
     if (!hasCore) body = num(mag);
     else {
       const r = ratio(mag);
-      body = r ? buildCore(numF, denF, r[0], r[1]) : bin('*', num(mag), buildCore(numF, denF, 1, 1));
+      body = r ? buildCore(numF, [], r[0], r[1]) : bin('*', num(mag), buildCore(numF, [], 1, 1));
     }
     for (const sub of sumTerms(body, sg, [])) out.push(sub);
   }
-  let acc = null;
-  for (const { sign, t } of out) {
-    const term = sign < 0 ? neg(t) : t;
-    acc = acc === null ? term : bin(sign < 0 ? '-' : '+', acc, t);
-  }
-  return acc === null ? num(0) : acc;
+  return sumOf(out);
 }
 
 // ---------- איחוד גורמים במכפלה/מנה: x·x -> x^2, x^2/x -> x ----------
@@ -292,14 +355,30 @@ function parts(n, s, m) {
   if (n.t === 'bin') {
     if (n.op === '*') { parts(n.a, s, m); parts(n.b, s, m); return; }
     if (n.op === '/') { parts(n.a, s, m); parts(n.b, s, -m); return; }
-    if (n.op === '^' && isNum(n.b)) { addBase(s, n.a, n.b.v * m); return; }
+    if (n.op === '^' && isNum(n.b)) {
+      const k = n.b.v * m;
+      if (Number.isInteger(k)) {
+        // חזקה שלמה של מכפלה/מנה/מספר/שורש/חזקה/מינוס מתפזרת על הגורמים
+        const a = n.a;
+        if (a.t === 'neg') { if (Math.abs(k) % 2 === 1) s.coef *= -1; parts(a.a, s, k); return; }
+        if ((a.t === 'bin' && (a.op === '*' || a.op === '/' || a.op === '^')) || a.t === 'num' || (a.t === 'fn' && a.name === 'sqrt')) {
+          parts(a, s, k);
+          return;
+        }
+      }
+      addBase(s, n.a, k);
+      return;
+    }
   }
-  if (n.t === 'num') { if (m === 1) s.coef *= n.v; else s.dcoef *= n.v; return; }
-  if (n.t === 'neg') {
-    if (m === 1) s.coef *= -1; else s.dcoef *= -1;
-    parts(n.a, s, m);
+  if (n.t === 'fn' && n.name === 'sqrt') { addBase(s, n.a, 0.5 * m); return; }
+  if (n.t === 'num') {
+    if (Number.isInteger(m)) {
+      const val = Math.pow(n.v, Math.abs(m));
+      if (m >= 0) s.coef *= val; else s.dcoef *= val;
+    } else addBase(s, n, m);
     return;
   }
+  if (n.t === 'neg') { s.coef *= -1; parts(n.a, s, m); return; }
   addBase(s, n, m);
 }
 function addBase(s, base, e) {
@@ -309,6 +388,17 @@ function addBase(s, base, e) {
   s.bases.set(k, g);
 }
 const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+// בסיס בחזקה e (e>0) כרשימת גורמים: x^(3/2) -> x·sqrt(x)
+function expFactors(base, e) {
+  if (e === 1) return [base];
+  if (Number.isInteger(e)) return [bin('^', base, num(e))];
+  if (Number.isInteger(e - 0.5)) {
+    const k = e - 0.5;
+    const pw = k === 0 ? [] : k === 1 ? [base] : [bin('^', base, num(k))];
+    return [...pw, call('sqrt', base)];
+  }
+  return [bin('^', base, num(e))];
+}
 function productCore(n) {
   const s = { coef: 1, dcoef: 1, bases: new Map() };
   parts(n, s, 1);
@@ -322,16 +412,9 @@ function productCore(n) {
   const numF = [], denF = [];
   for (const { base, exp } of s.bases.values()) {
     if (exp === 0) continue;
-    const e = Math.abs(exp);
-    const f = e === 1 ? base : bin('^', base, num(e));
-    (exp > 0 ? numF : denF).push(f);
+    (exp > 0 ? numF : denF).push(...expFactors(base, Math.abs(exp)));
   }
-  return { zero: false, sign, c, d, numF, denF };
-}
-function powSum(a, k) {   // (a)^k לכל k קטן, מפוזר
-  let acc = a;
-  for (let i = 1; i < k; i++) acc = distribute(acc, a);
-  return acc;
+  return { zero: false, sign, c, d, numF, denF, exps: s.bases };
 }
 function buildCore(numF0, denF, c, d) {
   // פישוט מונה: סכומים בתוך מכפלה מתפזרים (אם הביטוי פולינומי ומספר האיברים סביר)
@@ -341,7 +424,7 @@ function buildCore(numF0, denF, c, d) {
       ? powSum(f.a, f.b.v) : f);
   }
   const sums = numF.filter(isSum);
-  if (sums.length && numF.every(isPoly)) {
+  if (sums.length && numF.every(isAlg)) {
     let count = 1;
     for (const S of sums) count *= sumTerms(S, 1, []).length;
     if (count <= 16) {
@@ -454,19 +537,10 @@ function factorCommon(node) {
   if (infos.some(i => i.p.zero || i.p.denF.length || !Number.isInteger(i.p.c) || i.p.d !== 1)) return node;
   let G = 0;
   for (const i of infos) G = gcd(G, i.p.c);
-  // מפתח של כל בסיס בונה: בסיס -> {base, exp}
-  const expsOf = pp => {
-    const m = new Map();
-    for (const f of pp.numF) {
-      const isPow = f.t === 'bin' && f.op === '^' && isNum(f.b);
-      const base = isPow ? f.a : f, e = isPow ? f.b.v : 1, k = toText(base);
-      m.set(k, { base, exp: (m.get(k) ? m.get(k).exp : 0) + e });
-    }
-    return m;
-  };
-  let common = expsOf(infos[0].p);
+  const posExps = pp => new Map([...pp.exps].filter(([, v]) => v.exp > 0));
+  let common = posExps(infos[0].p);
   for (const i of infos.slice(1)) {
-    const m = expsOf(i.p);
+    const m = posExps(i.p);
     for (const k of [...common.keys()]) {
       const w = m.get(k);
       if (!w) common.delete(k);
@@ -475,18 +549,16 @@ function factorCommon(node) {
   }
   common = new Map([...common].filter(([, v]) => v.exp > 0));
   if (G <= 1 && common.size === 0) return node;
-  const F = [...(G > 1 ? [num(G)] : []), ...[...common.values()].map(({ base, exp }) => (exp === 1 ? base : bin('^', base, num(exp))))];
-  // איברים אחרי ההוצאה
+  const F = [...(G > 1 ? [num(G)] : []), ...[...common.values()].flatMap(({ base, exp }) => expFactors(base, exp))];
   const items = infos.map(({ sign, p }) => {
-    const m = expsOf(p);
     const numF = [];
-    for (const [k, v] of m) {
+    for (const [k, v] of p.exps) {
+      if (v.exp <= 0) continue;
       const rem = v.exp - (common.has(k) ? common.get(k).exp : 0);
-      if (rem > 0) numF.push(rem === 1 ? v.base : bin('^', v.base, num(rem)));
+      if (rem > 1e-12) numF.push(...expFactors(v.base, rem));
     }
     return { sign: sign * p.sign, t: buildCore(numF, [], p.c / G, 1) };
   });
-  // מסמנים את המינוס מחוץ לסוגריים אם האיבר הראשון שלילי
   const lead = items[0].sign < 0 ? -1 : 1;
   let acc = null;
   for (const it of items) {
