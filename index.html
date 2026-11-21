@@ -725,12 +725,15 @@ function toText(n, html = false) {
       if (op === '+') return `${w(a, 1)} + ${w(b, 1)}`;
       if (op === '-') return `${w(a, 1)} − ${w(b, 2)}`;
       if (op === '*') {
-        // בלי נקודת כפל בין מקדם מספרי לבין משתנה, סוגריים או שורש: 2x, 2(x + 1), 2√x
+        // בלי נקודת כפל לפני משתנה, סוגריים או שורש כשהמקדם מספר, קבוע, פרמטר או x: 2x, a(x + 1), x√x
         const L = w(a, 2), R = w(b, 4);
-        const coef = /^[−]?(\d+(\.\d+)?|π|e)$/.test(L);
-        const target = /^x(<sup>|\^|$)/.test(R) || /^\(/.test(R) || /^<span class="rad">/.test(R) || /^sqrt\(/.test(R);
-        const noDot = coef && target;
-        return L + (noDot ? '' : '·') + R;
+        // מקדם יכול להיות מספר, קבוע, פרמטר (a, b, c) או x (לפני סוגריים או שורש בלבד)
+        const part = '(\\d+(\\.\\d+)?|π|e|[abc])';
+        const coef = new RegExp('^[−]?' + part + '(·?' + part + ')*$').test(L);
+        const toX = /^[xabc](<sup>|\^|$)/.test(R);
+        const toGroup = /^\(/.test(R) || /^<span class="rad">/.test(R) || /^sqrt\(/.test(R);
+        const noDot = (coef && (toX || toGroup)) || (L === 'x' && toGroup);
+        return noDot ? L.replace(/·/g, '') + R : L + '·' + R;
       }
       if (op === '/') return html
         ? `<span class="frac"><span>${toText(a, html)}</span><span>${toText(b, html)}</span></span>`
